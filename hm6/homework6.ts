@@ -18,10 +18,6 @@ interface Motorcycle {
   hasSidecar: boolean;
 }
 
-function isMotorcycle(v: Vehicle): v is Motorcycle {
-  return "hasSidecar" in v;
-}
-
 type Vehicle = Truck | Car | Motorcycle; //Помилка на компіляції є, я переконався
 
 function getVehicleCapacity(vehicle: Vehicle): string {
@@ -31,7 +27,8 @@ function getVehicleCapacity(vehicle: Vehicle): string {
     case "truck":
       return `Load is ${vehicle.cargoWeight}kg of cargo`;
     case "motorcycle":
-      if (isMotorcycle(vehicle)) return `Load is with sidecar`;
+      if (vehicle.hasSidecar) return `Load is with sidecar`;
+      else return `Load is without sidecar`;
     default:
       return "";
   }
@@ -67,14 +64,13 @@ type RouteHandlers = {
   [routePath: string]: string | { action: () => void };
 };
 
-const obj = {
+const appRoutes = {
   home: "/home",
   login: {
     action(): void {
       console.log("Action taken");
     },
   },
-};
-const appRoutes = obj as RouteHandlers;
+} satisfies RouteHandlers;
 if (appRoutes["login"] instanceof Object && "action" in appRoutes["login"])
   appRoutes["login"].action();
