@@ -19,34 +19,18 @@ function updateProperty<T extends Object, K extends keyof T>(
 //    * Клас повинен мати метод track(eventName, payload): void.
 type EventName = "click" | "scroll" | "purchase";
 
-interface EventPayloads<T> {
-  name: T;
-  x?: number;
-  y?: number;
-  offset?: number;
-  itemId?: string;
-  amount?: number;
+interface EventPayloads {
+  click?: { x: number; y: number };
+  scroll?: { offset: number };
+  purchase?: { itemId: string; amount: number };
 }
 
-class AnalyticsTracker<T extends EventName, U extends EventPayloads<T>> {
+class AnalyticsTracker<T extends EventName, U extends EventPayloads> {
   eventName!: T;
-  payload!: U;
+  payload!: U[T];
 
-  track(eventName: T, payload: U): void {
-    switch (eventName) {
-      case "click":
-        payload["x"] = 10;
-        payload["y"] = 20;
-        break;
-      case "scroll":
-        payload["offset"] = 100;
-        break;
-      case "purchase":
-        payload["itemId"] = "0002323";
-        payload["amount"] = 42;
-        break;
-    }
-    console.log(`Tracking ${eventName} event...`);
+  track(eventName: T, payload: U[T]): void {
+    console.log(`Tracking ${eventName} event...\nPayload: ${payload}`);
   }
 }
 
