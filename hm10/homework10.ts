@@ -76,16 +76,50 @@ const mockServerResponse: NoteServerDTO[] = [
   },
 ];
 
-function ValidateNotEmpty() {
-  //TODO
+function ValidateNotEmpty(
+  target: any,
+  propertyKey: string,
+  descriptor: PropertyDescriptor
+) {
+  const originMethod = descriptor.value;
+  descriptor.value = function (
+    data: NoteServerDTO | Partial<NoteServerDTO>,
+    id?: string
+  ) {
+    if (!data.note_title?.trim() || !data.note_content?.trim()) {
+      throw new Error(`[Validation Error]: Title or content cannot be empty!`);
+    }
+
+    originMethod.call(this, data, id);
+  };
 }
 
-function SanitizeInput() {
-  //TODO
+function SanitizeInput(
+  target: any,
+  propertyKey: string,
+  descriptor: PropertyDescriptor
+) {
+  const originMethod = descriptor.value;
+  descriptor.value = function (
+    data: NoteServerDTO | Partial<NoteServerDTO>,
+    id?: string
+  ) {
+    if (data.note_content?.trim()) data.note_content = data.note_content.trim();
+    if (data.note_title?.trim()) data.note_title = data.note_title.trim();
+    originMethod.call(this, data, id);
+  };
 }
 
-function AutoUpdateTimestamp() {
-  //TODO
+function AutoUpdateTimestamp(
+  target: any,
+  propertyKey: string,
+  descriptor: PropertyDescriptor
+) {
+  const originMethod = descriptor.value;
+  descriptor.value = function (data: Partial<NoteServerDTO>, id: string) {
+    data.updated_at = new Date().toISOString();
+    originMethod.call(this, data, id);
+  };
 }
 
 interface Note {
@@ -98,26 +132,107 @@ interface Note {
   type: "default" | "confirmation";
 }
 
-class NoteList {
-  protected _list: Note[];
+enum NoteActionEnum {
+  ADD = "add",
+  DELETE = "delete",
+  EDIT = "edit",
+  GET = "get",
+  COMPLETE = "complete",
+  SEARCH = "search",
+}
 
-  constructor(list: NoteServerDTO[]) {
-    this._list = list.map((val) => mapFromDTO(val));
+interface NoteAction {
+  readonly actionType: NoteActionEnum;
+  readonly note: Note;
+}
+
+class NoteLogger {
+  private readonly logs: NoteAction[] = [];
+
+  public logAction(log: NoteAction): void {
+    this.logs.push(log);
   }
 
-  addNote(n: Note): void {
-    this._list.push(n);
+  public showHistory(): void {
+    console.log("Note change history:");
+    this.logs.forEach((log) => {
+      console.log(`[${log.actionType}]: ${log.note.noteId}`);
+    });
+  }
+}
+
+class NoteList {
+  private _list: Note[];
+  private readonly logger!: NoteLogger;
+
+  constructor(list: NoteServerDTO[], logger: NoteLogger) {
+    this._list = list.map((val) => mapFromDTO(val));
+    this.logger = logger;
+  }
+
+  @SanitizeInput
+  @ValidateNotEmpty
+  addNote(data: NoteServerDTO): void {
+    this._list.push(mapFromDTO(data));
+    this.logger.logAction({
+      actionType: NoteActionEnum.ADD,
+      note: mapFromDTO(data),
+    });
   }
 
   delNote(id: string): void {
-    this._list = this._list.filter((n) => n.noteId !== id);
+    const del_note: Note | undefined = this._list.find((n) => n.noteId === id);
+    if (del_note !== undefined) {
+      if (del_note.type === "confirmation") {
+        if (del_note.isCompleted) {
+          this._list = this._list.filter((n) => n.noteId !== id);
+          this.logger.logAction({
+            actionType: NoteActionEnum.EDIT,
+            note: del_note,
+          });
+        } else
+          throw new Error(`[Confirmation Error]: Note is not completed: ${id}`);
+      } else {
+        this._list = this._list.filter((n) => n.noteId !== id);
+        this.logger.logAction({
+          actionType: NoteActionEnum.DELETE,
+          note: del_note,
+        });
+      }
+    } else {
+      throw new Error(`[Validation Error]: Couldn't find given index: ${id}`);
+    }
   }
 
-  editNote<V extends Partial<NoteServerDTO>>(id: string, payload: V): void {
+  @SanitizeInput
+  @ValidateNotEmpty
+  @AutoUpdateTimestamp
+  editNote<V extends Partial<NoteServerDTO>>(data: V, id: string): void {
     const ed_note: Note | undefined = this._list.find((n) => n.noteId === id);
-    //const formed_payload = mapFromDTO(payload);
+    const formed_payload: ReconstructedNote = mapFromDTO(data as NoteServerDTO);
     if (ed_note !== undefined) {
-      this._list[this._list.indexOf(ed_note)] = { ...ed_note, ...payload }; //TODO
+      if (ed_note.type === "confirmation") {
+        if (ed_note.isCompleted) {
+          this._list[this._list.indexOf(ed_note)] = {
+            ...ed_note,
+            ...formed_payload,
+          };
+          this.logger.logAction({
+            actionType: NoteActionEnum.EDIT,
+            note: ed_note,
+          });
+        } else
+          throw new Error(`[Confirmation Error]: Note is not completed: ${id}`);
+      } else {
+        this._list[this._list.indexOf(ed_note)] = {
+          ...ed_note,
+          ...formed_payload,
+        };
+        this.logger.logAction({
+          actionType: NoteActionEnum.EDIT,
+          note: ed_note,
+        });
+      }
     } else {
       throw new Error(`[Validation Error]: Couldn't find given index: ${id}`);
     }
@@ -125,16 +240,25 @@ class NoteList {
 
   getNoteInfo(id: string): NoteServerDTO {
     const nt = this._list.find((n) => n.noteId === id);
-    if (nt !== undefined) return mapToDTO(nt);
-    else
+    if (nt !== undefined) {
+      this.logger.logAction({
+        actionType: NoteActionEnum.GET,
+        note: nt,
+      });
+      return mapToDTO(nt);
+    } else
       throw new Error(`[Validation Error]: Couldn't find given index: ${id}`);
   }
 
   completeNote(id: string): void {
     const nt = this._list.find((n) => n.noteId === id);
-    if (nt !== undefined)
+    if (nt !== undefined) {
       this._list[this._list.indexOf(nt)]!.isCompleted = true;
-    else
+      this.logger.logAction({
+        actionType: NoteActionEnum.ADD,
+        note: nt,
+      });
+    } else
       throw new Error(`[Validation Error]: Couldn't find given index: ${id}`);
   }
 
@@ -146,14 +270,25 @@ class NoteList {
 
   searchByTitle(t: string): NoteServerDTO {
     const nt = this._list.find((n) => n.noteTitle === t);
-    if (nt !== undefined) return mapToDTO(nt);
-    else throw new Error(`[Validation Error]: Couldn't find given title: ${t}`);
+    if (nt !== undefined) {
+      this.logger.logAction({
+        actionType: NoteActionEnum.ADD,
+        note: nt,
+      });
+      return mapToDTO(nt);
+    } else
+      throw new Error(`[Validation Error]: Couldn't find given title: ${t}`);
   }
 
   searchByContent(cont: string): NoteServerDTO {
     const nt = this._list.find((n) => n.noteContent === cont);
-    if (nt !== undefined) return mapToDTO(nt);
-    else
+    if (nt !== undefined) {
+      this.logger.logAction({
+        actionType: NoteActionEnum.ADD,
+        note: nt,
+      });
+      return mapToDTO(nt);
+    } else
       throw new Error(`[Validation Error]: Couldn't find given title: ${cont}`);
   }
 
@@ -165,10 +300,22 @@ class NoteList {
       .map((n) => mapToDTO(n));
   }
 
-  sortByCreated(): void {
-    //TODO
+  sortByCreated(): NoteServerDTO[] {
+    return this._list
+      .sort((a, b) => {
+        return a.createdAt < b.createdAt
+          ? -1
+          : a.createdAt > b.createdAt
+            ? 1
+            : 0;
+      })
+      .map((n) => mapToDTO(n));
   }
 }
+
+const logger: NoteLogger = new NoteLogger();
+
+const notes: NoteList = new NoteList(mockServerResponse, logger);
 
 type StartsWithUppercase<StringPart extends string> =
   StringPart extends Uncapitalize<StringPart> ? false : true;
